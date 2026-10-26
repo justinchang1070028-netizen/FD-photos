@@ -228,3 +228,6 @@ photos/
 work/
 pending.jsonl
 *.xlsx
+
+# Test photos (personal data, never commit)
+docs/Sample/
