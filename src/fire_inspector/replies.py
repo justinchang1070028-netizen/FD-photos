@@ -3,6 +3,16 @@
 from fire_inspector.schema import ITEM_NAMES, ReviewResult
 
 FAILURE_REPLY = "⚠️ 這張照片這次沒審查成功,請重傳一次。"
+QUERY_FAILURE_REPLY = "⚠️ 暫時查不到你的紀錄,請稍後再試。"
+MY_RECORD_COMMAND = "/我的紀錄"
+
+
+def is_my_record_command(text: str | None) -> bool:
+    return bool(text) and MY_RECORD_COMMAND in text
+
+
+def my_record_reply(cumulative: int) -> str:
+    return f"你的本學期累計合格總次數為 {cumulative} 次"
 
 _LABELS = {
     "clothing": "衣服與褲子",

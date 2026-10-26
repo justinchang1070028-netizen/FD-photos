@@ -13,9 +13,13 @@ from fire_inspector.attachments import select_attachment, verify_image
 from fire_inspector.config import Config
 from fire_inspector.counting import already_counted_on, count_passing_days
 from fire_inspector.models import Record
+from fire_inspector.recent_ids import RecentIds
 from fire_inspector.replies import (
     FAILURE_REPLY,
+    QUERY_FAILURE_REPLY,
     fit_to_discord,
+    is_my_record_command,
+    my_record_reply,
     queue_notice,
     record_cells,
     render_reply,
@@ -51,9 +55,11 @@ class FireInspectorBot(discord.Client):
         self.store = store
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self.pending_by_user: Counter[int] = Counter()
-        self.seen_message_ids: set[int] = set()
+        self.seen_message_ids = RecentIds()  # 超過上限只丟最舊的,不會整個清空
         self.processing = False
         self._worker_task: asyncio.Task | None = None
+        # 審查流程和 /我的紀錄 都會讀寫 Excel,用一把鎖讓它們輪流來
+        self._store_lock = asyncio.Lock()
 
     async def setup_hook(self) -> None:
         self._worker_task = asyncio.create_task(self._worker())
@@ -69,6 +75,12 @@ class FireInspectorBot(discord.Client):
     async def on_message(self, message: discord.Message) -> None:
         if message.channel.id != self.config.channel_id or message.author.bot:
             return
+
+        # 查詢指令:直接讀 Excel 回答,完全不呼叫 claude -p(就算同時附了照片也一樣)
+        if is_my_record_command(message.content):
+            await self._answer_my_record(message)
+            return
+
         selected = select_attachment(message.attachments)
         if selected is None:
             return
@@ -76,8 +88,6 @@ class FireInspectorBot(discord.Client):
 
         if message.id in self.seen_message_ids:
             return
-        if len(self.seen_message_ids) > 5000:
-            self.seen_message_ids.clear()
         self.seen_message_ids.add(message.id)
 
         user_id = message.author.id
@@ -89,6 +99,21 @@ class FireInspectorBot(discord.Client):
         placeholder = await self._reply(message, queue_notice(ahead), notify=False)
         self.pending_by_user[user_id] += 1
         await self.queue.put(Job(message, attachment, extra_images, placeholder))
+
+    async def _answer_my_record(self, message: discord.Message) -> None:
+        try:
+            records = await self._store(self.store.all_records)
+        except Exception:
+            log.exception("查詢紀錄失敗")
+            await self._reply(message, QUERY_FAILURE_REPLY)
+            return
+        total = count_passing_days(records, message.author.id, self.config.semester_start)
+        await self._reply(message, my_record_reply(total))
+
+    async def _store(self, function, *args):
+        """所有 Excel / 照片存取都經過這裡:一次只讓一個人用,而且不卡住 Discord 的連線。"""
+        async with self._store_lock:
+            return await asyncio.to_thread(function, *args)
 
     # ---- 一次處理一張 ----
 
@@ -139,9 +164,9 @@ class FireInspectorBot(discord.Client):
         nickname = message.author.display_name
 
         filename = build_photo_filename(taken_at, nickname, message.author.name, user_id, extension)
-        photo_path = await asyncio.to_thread(self.store.save_photo, filename, data)
+        photo_path = await self._store(self.store.save_photo, filename, data)
 
-        records = await asyncio.to_thread(self.store.all_records)
+        records = await self._store(self.store.all_records)
         counted_before = already_counted_on(records, user_id, taken_at.date())
         clothing, shoes, hair, other = record_cells(review, overall)
         draft = Record(
@@ -157,7 +182,7 @@ class FireInspectorBot(discord.Client):
             photo_path=photo_path,
         )
         cumulative = count_passing_days([*records, draft], user_id, self.config.semester_start)
-        await asyncio.to_thread(self.store.add, replace(draft, cumulative=cumulative))
+        await self._store(self.store.add, replace(draft, cumulative=cumulative))
 
         text = render_reply(
             review,
@@ -171,7 +196,7 @@ class FireInspectorBot(discord.Client):
 
     async def _flush_pending(self) -> None:
         try:
-            await asyncio.to_thread(self.store.flush_pending)
+            await self._store(self.store.flush_pending)
         except Exception:
             log.exception("把暫存區補進 Excel 時出錯")
 

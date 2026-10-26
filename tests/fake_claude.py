@@ -34,7 +34,7 @@ def main() -> None:
     cwd = Path.cwd()
     Path(os.environ["FAKE_CLAUDE_LOG"]).write_text(
         json.dumps(
-            {"cwd": str(cwd), "files": sorted(p.name for p in cwd.iterdir()), "args": sys.argv[1:]},
+            {"cwd": str(cwd), "files": sorted(p.name for p in cwd.iterdir()), "args": sys.argv[1:], "env_keys": sorted(os.environ)},
             ensure_ascii=False,
         ),
         encoding="utf-8",

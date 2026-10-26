@@ -1,12 +1,18 @@
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 import pytest
 
-from fire_inspector.reviewer import ReviewError, build_system_prompt, review_photo
+from fire_inspector.reviewer import (
+    ReviewError,
+    build_child_env,
+    build_system_prompt,
+    review_photo,
+)
 
 FAKE = Path(__file__).parent / "fake_claude.py"
 
@@ -37,6 +43,9 @@ def fake(tmp_path, monkeypatch):
 
 def run_review(fake, **kwargs):
     kwargs.setdefault("claude_command", [sys.executable, str(FAKE)])
+    kwargs.setdefault(
+        "extra_env", {k: v for k, v in os.environ.items() if k.startswith("FAKE_CLAUDE_")}
+    )
     return asyncio.run(
         review_photo(
             b"fake-image-bytes", ".jpg", model="test-model", work_root=fake.work_root, **kwargs
@@ -157,3 +166,40 @@ def test_system_prompt_only_fails_clothing_when_it_is_obvious():
     assert "滑布" in prompt
     assert "破洞" in prompt
     assert "自己確認衣服標籤" in prompt
+
+
+# --- 防護 2 強化:只傳必要的環境變數、不問權限、不載入 MCP ---
+
+
+def test_child_env_keeps_only_what_claude_needs_to_run():
+    environ = {
+        "PATH": r"C:\bin",
+        "USERPROFILE": r"C:\Users\user",
+        "SystemRoot": r"C:\Windows",
+        "HTTPS_PROXY": "http://proxy",
+        "DISCORD_TOKEN": "secret-token-value",
+        "CHANNEL_ID": "123",
+        "CLAUDE_CODE_MESSAGING_TOKEN": "another-secret",
+        "ANTHROPIC_API_KEY": "sk-secret",
+    }
+    child = build_child_env(environ)
+    assert set(child) == {"PATH", "USERPROFILE", "SystemRoot", "HTTPS_PROXY"}
+
+
+def test_discord_token_is_never_handed_to_claude(fake, monkeypatch):
+    monkeypatch.setenv("DISCORD_TOKEN", "secret-token-value")
+    monkeypatch.setenv("SOME_OTHER_SECRET", "x")
+    fake.mode("ok")
+    run_review(fake)
+    keys = {key.upper() for key in fake.log["env_keys"]}
+    assert "DISCORD_TOKEN" not in keys
+    assert "SOME_OTHER_SECRET" not in keys
+    assert "PATH" in keys  # 必要的還是有給
+
+
+def test_claude_never_stops_to_ask_for_permission_and_loads_no_mcp_servers(fake):
+    fake.mode("ok")
+    run_review(fake)
+    args = fake.log["args"]
+    assert args[args.index("--permission-mode") + 1] == "dontAsk"
+    assert "--strict-mcp-config" in args

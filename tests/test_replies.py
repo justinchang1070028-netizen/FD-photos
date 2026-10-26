@@ -178,3 +178,27 @@ def test_over_long_text_keeps_a_verdict_that_is_followed_by_an_extra_note():
     fitted = fit_to_discord(text)
     assert len(fitted) <= 2000
     assert fitted.endswith("\n".join(tail))
+
+
+# --- /我的紀錄 指令 ---
+
+
+def test_command_is_found_anywhere_in_the_text():
+    from fire_inspector.replies import is_my_record_command
+
+    assert is_my_record_command("/我的紀錄")
+    assert is_my_record_command("請問一下 /我的紀錄 謝謝")
+
+
+@pytest.mark.parametrize("text", ["我的紀錄", "/我的記錄", "/records", "", None])
+def test_other_text_is_not_the_command(text):
+    from fire_inspector.replies import is_my_record_command
+
+    assert not is_my_record_command(text)
+
+
+def test_my_record_reply_states_the_semester_total():
+    from fire_inspector.replies import my_record_reply
+
+    assert my_record_reply(7) == "你的本學期累計合格總次數為 7 次"
+    assert my_record_reply(0) == "你的本學期累計合格總次數為 0 次"

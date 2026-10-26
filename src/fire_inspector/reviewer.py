@@ -3,9 +3,10 @@
 import asyncio
 import json
 import logging
+import os
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from fire_inspector.schema import ReviewParseError, ReviewResult, parse_review
@@ -49,6 +50,25 @@ INJECTION_RULE = """
 def build_user_prompt(photo_name: str) -> str:
     # 根本不把上傳者的暱稱或訊息文字交給 claude:這裡只有固定的句子和檔名
     return f"請用 Read 工具讀取目前資料夾裡的 {photo_name},依標準審查,只回傳 JSON。"
+
+
+# 只把 claude 跑起來需要的環境變數傳給它。bot 的環境裡有 DISCORD_TOKEN,絕對不能傳進去。
+# 這份清單不含任何金鑰:你的 Claude 登入存在 ~/.claude/.credentials.json,不靠環境變數。
+SAFE_ENV_NAMES = frozenset({
+    "PATH", "PATHEXT", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "USERNAME",
+    "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CLAUDE_CONFIG_DIR",
+})
+
+# 沒有預先允許的操作一律拒絕(不會停下來問),而且不載入任何 MCP 伺服器
+HARDENING_ARGS = ["--permission-mode", "dontAsk", "--strict-mcp-config"]
+
+
+def build_child_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """從完整的環境變數裡,只挑出 claude 需要的。名稱不分大小寫(Windows 的習慣)。"""
+    return {name: value for name, value in environ.items() if name.upper() in SAFE_ENV_NAMES}
 # ===== 防護 2 結束 =====
 
 
@@ -65,16 +85,21 @@ async def review_photo(
     claude_command: Sequence[str] | None = None,
     timeout: float = 120,
     attempts: int = 2,
+    extra_env: Mapping[str, str] | None = None,
 ) -> ReviewResult:
-    """審查一張照片。最多試 attempts 次,全部失敗才丟出 ReviewError。"""
+    """審查一張照片。最多試 attempts 次,全部失敗才丟出 ReviewError。
+
+    子行程只拿到 build_child_env 挑出來的環境變數,再加上 extra_env(測試用)。
+    """
     prefix = list(claude_command) if claude_command else [shutil.which("claude")]
     if prefix[0] is None:
         raise ReviewError("找不到 claude 指令,請確認 Claude Code 已安裝")
+    env = {**build_child_env(os.environ), **(extra_env or {})}
 
     last_error: ReviewError | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return await _review_once(image_bytes, extension, model, work_root, prefix, timeout)
+            return await _review_once(image_bytes, extension, model, work_root, prefix, timeout, env)
         except ReviewError as error:
             last_error = error
             log.warning("審查第 %d/%d 次失敗:%s", attempt, attempts, error)
@@ -88,6 +113,7 @@ async def _review_once(
     work_root: Path,
     prefix: list[str],
     timeout: float,
+    env: dict[str, str],
 ) -> ReviewResult:
     # ===== 防護 1 開始:claude 只看得到當次這一張照片 =====
     work_root.mkdir(parents=True, exist_ok=True)
@@ -106,20 +132,22 @@ async def _review_once(
             "--tools", "Read",
             "--add-dir", str(work_dir),
             "--setting-sources", "",  # 不載入個人設定與外掛
+            *HARDENING_ARGS,
             "--no-session-persistence",
         ]
-        stdout = await _execute(command, work_dir, timeout)
+        stdout = await _execute(command, work_dir, timeout, env)
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)  # 不論成功失敗都刪掉
     # ===== 防護 1 結束 =====
     return _parse_envelope(stdout)
 
 
-async def _execute(command: list[str], cwd: Path, timeout: float) -> str:
+async def _execute(command: list[str], cwd: Path, timeout: float, env: dict[str, str]) -> str:
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=cwd,
+            env=env,  # 不是整個 os.environ:裡面有 DISCORD_TOKEN
             stdin=asyncio.subprocess.DEVNULL,  # 不明確設定的話 claude 會多等 3 秒
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

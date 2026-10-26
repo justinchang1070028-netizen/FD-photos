@@ -19,7 +19,7 @@
 | 編號 | 名稱 | 位置 |
 |---|---|---|
 | 1 | claude -p 只能讀到當次那一張照片(暫時工作資料夾、只開讀檔工具) | `reviewer.py` |
-| 2 | 上傳者打的字與照片裡的字只當資料,不交給 claude 當指令 | `reviewer.py` |
+| 2 | 上傳者打的字與照片裡的字只當資料,不交給 claude 當指令;子行程只拿白名單環境變數(不含 `DISCORD_TOKEN`)、`dontAsk`、`--strict-mcp-config` | `reviewer.py` |
 | 3 | 暱稱轉檔名前清掉 `/`、`\`、`..`、`:` 等路徑字元 | `sanitize.py` |
 | 4 | 寫進 Excel 的文字以 `=`、`+`、`-`、`@` 開頭時轉成純文字 | `sanitize.py`(`storage.py` 寫入時呼叫) |
 
