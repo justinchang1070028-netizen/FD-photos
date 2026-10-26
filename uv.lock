@@ -278,7 +278,7 @@ wheels = [
 [[package]]
 name = "fire-inspector"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "discord-py" },
     { name = "openpyxl" },

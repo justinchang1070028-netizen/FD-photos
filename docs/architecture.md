@@ -516,11 +516,14 @@ FD-photos/                      ← 專案資料夾(會 commit)
 │   ├── bot.py                  ← 連 Discord、收訊息、排隊、回覆
 │   ├── reviewer.py             ← 呼叫 claude -p、重試、逾時、建暫時資料夾(防護 1、2)
 │   ├── schema.py               ← JSON 格式定義與檢查
-│   ├── verdict.py              ← 算綜合結果、組回覆文字
-│   ├── counting.py             ← 從 Excel 算累計次數
-│   ├── storage.py              ← 讀寫 Excel、暫存檔、存照片(防護 4)
-│   └── sanitize.py             ← 檔名與文字清洗(防護 3、4)
-└── tests/                      ← 自動測試
+│   ├── verdict.py              ← 算綜合結果(由程式算,不採用模型說的)
+│   ├── replies.py              ← 組回覆社員的文字、Excel 判定欄內容
+│   ├── attachments.py          ← 挑出要審查的圖片、確認檔案真的是圖片
+│   ├── models.py               ← 一次投稿的紀錄(Excel 的一列)
+│   ├── counting.py             ← 從紀錄算累計次數
+│   ├── storage.py              ← 讀寫 Excel、暫存檔、存照片(呼叫防護 3、4 的清洗)
+│   └── sanitize.py             ← 檔名與文字清洗(防護 3、4 的程式碼在這裡)
+└── tests/                      ← 自動測試(含一個假的 claude,測試時不會花額度)
 
 DATA_DIR/(放在專案外面,不進版控)
 ├── records.xlsx                ← 所有紀錄
