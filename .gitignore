@@ -218,3 +218,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# FD-photos: secrets and member data (never commit)
+.env.*
+!.env.example
+data/
+DATA_DIR/
+photos/
+work/
+pending.jsonl
+*.xlsx
